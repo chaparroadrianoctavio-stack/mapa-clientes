@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ClienteConId } from "@/lib/tipos";
 import {
   fechaCorta,
@@ -13,10 +13,12 @@ import {
   type Grupo,
 } from "@/lib/utils";
 import Acciones from "./Acciones";
-import PanelNuevo, { type Cercano } from "./PanelNuevo";
-import type { Foco, ModoNuevo } from "./Mapa";
+import PanelNuevo from "./PanelNuevo";
+import ListaCercanos, { type Cercano } from "./ListaCercanos";
+import type { Foco, InfoPedido, Radio } from "./Mapa";
 import { distanciaKm, type Coord } from "@/lib/coordenadas";
 import { tieneCoordenadas } from "@/lib/tipos";
+import { cuandoPedido, hoyMendoza, pedidoPendiente } from "@/lib/fechas";
 
 const Mapa = dynamic(() => import("./Mapa"), {
   ssr: false,
@@ -28,6 +30,7 @@ const Mapa = dynamic(() => import("./Mapa"), {
 });
 
 const GRUPOS: { id: Grupo; titulo: string; color: string }[] = [
+  { id: "pedido", titulo: "Con pedido", color: "bg-rose-600" },
   { id: "mapa", titulo: "En el mapa", color: "bg-blue-600" },
   { id: "link", titulo: "Ubicación por link", color: "bg-purple-600" },
   { id: "sin", titulo: "Sin ubicación", color: "bg-slate-400" },
@@ -41,8 +44,21 @@ const puntos = () => {
 };
 const esEscritorio = () => window.matchMedia("(min-width: 768px)").matches;
 
-/** Radio para buscar clientes cercanos a uno nuevo. */
+/** Radio para buscar clientes cercanos a uno nuevo o con pedido. */
 const RADIO_KM = 5;
+
+/** Clientes con coordenadas a menos de RADIO_KM de un punto, del más cerca al más lejos. */
+function buscarCercanos(todos: ClienteConId[], punto: Coord, excluir?: string): Cercano[] {
+  return todos
+    .filter(tieneCoordenadas)
+    .filter((c) => c.id !== excluir)
+    .map((c) => ({ cliente: c as ClienteConId, km: distanciaKm(punto, c) }))
+    .filter((x) => x.km <= RADIO_KM)
+    .sort((a, b) => a.km - b.km);
+}
+
+// "Hoy" solo existe en el navegador: en el servidor (página prerenderizada) es "".
+const sinSuscripcion = () => () => {};
 
 export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   const [busqueda, setBusqueda] = useState("");
@@ -82,28 +98,63 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   }, []);
 
   const todos = useMemo(() => [...clientes, ...extras], [clientes, extras]);
+  const hoy = useSyncExternalStore(sinSuscripcion, hoyMendoza, () => "");
 
-  const cercanos = useMemo<Cercano[]>(() => {
-    if (!punto) return [];
-    return todos
-      .filter(tieneCoordenadas)
-      .map((c) => ({ cliente: c as ClienteConId, km: distanciaKm(punto, c) }))
-      .filter((x) => x.km <= RADIO_KM)
-      .sort((a, b) => a.km - b.km);
-  }, [todos, punto]);
-
-  const modoNuevo = useMemo<ModoNuevo | null>(
-    () =>
-      modo === "nuevo"
-        ? {
-            punto,
-            radioKm: RADIO_KM,
-            eligiendo,
-            cercanos: new Set(cercanos.map((x) => x.cliente.id)),
-          }
-        : null,
-    [modo, punto, eligiendo, cercanos],
+  // Cercanos al punto que se está cargando en "Nuevo cliente"
+  const cercanos = useMemo<Cercano[]>(
+    () => (punto ? buscarCercanos(todos, punto) : []),
+    [todos, punto],
   );
+
+  // Clientes con pedido pendiente y sus vecinos a menos de RADIO_KM
+  const vecinosPedido = useMemo(() => {
+    const m = new Map<string, Cercano[]>();
+    for (const c of todos) {
+      if (pedidoPendiente(c.pedido, hoy) && tieneCoordenadas(c)) {
+        m.set(c.id, buscarCercanos(todos, c, c.id));
+      }
+    }
+    return m;
+  }, [todos, hoy]);
+
+  const infoPedidos = useMemo(() => {
+    const m = new Map<string, InfoPedido>();
+    for (const c of todos) {
+      if (pedidoPendiente(c.pedido, hoy)) {
+        m.set(c.id, {
+          cuando: cuandoPedido(c.pedido!, hoy),
+          cercanos: vecinosPedido.get(c.id)?.length ?? 0,
+        });
+      }
+    }
+    return m;
+  }, [todos, hoy, vecinosPedido]);
+
+  const seleccionado = todos.find((c) => c.id === seleccionadoId) ?? null;
+
+  const radio = useMemo<Radio | null>(() => {
+    if (modo === "nuevo") {
+      return {
+        punto,
+        radioKm: RADIO_KM,
+        eligiendo,
+        cercanos: new Set(cercanos.map((x) => x.cliente.id)),
+        editable: true,
+      };
+    }
+    // Cliente con pedido elegido: su círculo y sus vecinos
+    const vecinos = seleccionado ? vecinosPedido.get(seleccionado.id) : undefined;
+    if (seleccionado && vecinos && tieneCoordenadas(seleccionado)) {
+      return {
+        punto: { lat: seleccionado.lat, lng: seleccionado.lng },
+        radioKm: RADIO_KM,
+        eligiendo: false,
+        cercanos: new Set(vecinos.map((x) => x.cliente.id)),
+        editable: false,
+      };
+    }
+    return null;
+  }, [modo, punto, eligiendo, cercanos, seleccionado, vecinosPedido]);
 
   const meses = useMemo(
     () => [...new Set(todos.map((c) => c.mes))].sort().reverse(),
@@ -137,10 +188,25 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   }, [todos, busqueda, mes, fecha]);
 
   const porGrupo = useMemo(() => {
-    const g: Record<Grupo, ClienteConId[]> = { mapa: [], link: [], sin: [] };
-    for (const c of filtrados) g[grupoDe(c)].push(c);
+    const g: Record<Grupo, ClienteConId[]> = { pedido: [], mapa: [], link: [], sin: [] };
+    for (const c of filtrados) g[infoPedidos.has(c.id) ? "pedido" : grupoDe(c)].push(c);
+    g.pedido.sort((a, b) => a.pedido!.localeCompare(b.pedido!));
     return g;
-  }, [filtrados]);
+  }, [filtrados, infoPedidos]);
+
+  /** Foco en un cliente; si tiene pedido, encuadra su círculo de 5 km. */
+  function enfocar(c: ClienteConId, conRadio: boolean) {
+    const escritorio = esEscritorio();
+    setFoco((f) => ({
+      id: c.id,
+      t: (f?.t ?? 0) + 1,
+      radioKm: conRadio ? RADIO_KM : undefined,
+      padAbajo: conRadio && !escritorio ? Math.round(window.innerHeight * 0.5) : 0,
+      // En el celular los datos ya están en el panel: el popup taparía el círculo.
+      sinPopup: conRadio && !escritorio,
+    }));
+    if (!escritorio) setAlto(conRadio ? puntos()[1] : ALTO_MIN);
+  }
 
   // Al tocar un pin: resaltar y mostrar ese cliente en la lista.
   useEffect(() => {
@@ -153,14 +219,22 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   function elegirDesdeLista(c: ClienteConId) {
     setSeleccionadoId(c.id);
     if (typeof c.lat === "number" && typeof c.lng === "number") {
-      setFoco((f) => ({ id: c.id, t: (f?.t ?? 0) + 1 }));
-      if (!esEscritorio()) setAlto(ALTO_MIN);
+      enfocar(c, vecinosPedido.has(c.id));
     }
   }
 
   function elegirDesdeMapa(id: string) {
     desdeMapa.current = true;
     setSeleccionadoId(id);
+    // Al tocar un cliente con pedido, mostrar todo su círculo.
+    const c = todos.find((x) => x.id === id);
+    if (c && vecinosPedido.has(id)) enfocar(c, true);
+  }
+
+  /** Mostrar un vecino en el mapa sin perder el cliente con pedido elegido. */
+  function verVecino(c: ClienteConId) {
+    setFoco((f) => ({ id: c.id, t: (f?.t ?? 0) + 1 }));
+    if (!esEscritorio()) setAlto(ALTO_MIN);
   }
 
   // ---------- Nuevo cliente ----------
@@ -200,8 +274,7 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     setMes("todos");
     setFecha("todas");
     setSeleccionadoId(c.id);
-    setFoco((f) => ({ id: c.id, t: (f?.t ?? 0) + 1 }));
-    if (!esEscritorio()) setAlto(ALTO_MIN);
+    enfocar(c, pedidoPendiente(c.pedido, hoy) && tieneCoordenadas(c));
   }
 
   async function eliminar(c: ClienteConId) {
@@ -280,8 +353,9 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
           foco={foco}
           encuadre={encuadre}
           onSeleccionar={elegirDesdeMapa}
-          nuevo={modoNuevo}
+          radio={radio}
           onElegirPunto={elegirPunto}
+          pedidos={infoPedidos}
         />
         {modo === "nuevo" && eligiendo && (
           <div className="pointer-events-none absolute inset-x-0 top-28 z-[1000] flex justify-center px-4 md:top-3">
@@ -445,6 +519,9 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
                       activo={c.id === seleccionadoId}
                       onClick={() => elegirDesdeLista(c)}
                       onEliminar={() => eliminar(c)}
+                      pedido={infoPedidos.get(c.id)}
+                      vecinos={vecinosPedido.get(c.id)}
+                      onVerVecino={verVecino}
                     />
                   ))}
                 </ul>
@@ -465,15 +542,27 @@ function ItemCliente({
   activo,
   onClick,
   onEliminar,
+  pedido,
+  vecinos,
+  onVerVecino,
 }: {
   cliente: ClienteConId;
   grupo: Grupo;
   activo: boolean;
   onClick: () => void;
   onEliminar: () => void;
+  pedido?: InfoPedido;
+  vecinos?: Cercano[];
+  onVerVecino: (c: ClienteConId) => void;
 }) {
-  const color =
-    activo ? "bg-orange-500" : grupo === "mapa" ? "bg-blue-600" : grupo === "link" ? "bg-purple-600" : "bg-slate-400";
+  const color = activo
+    ? "bg-orange-500"
+    : {
+        pedido: "bg-rose-600",
+        mapa: "bg-blue-600",
+        link: "bg-purple-600",
+        sin: "bg-slate-400",
+      }[grupo];
   const sinResolver = grupo === "link" && c.lat === null;
 
   return (
@@ -505,6 +594,11 @@ function ItemCliente({
           <span className="block truncate text-sm text-slate-500 dark:text-slate-400">
             {c.zona || "Sin zona"}
           </span>
+          {pedido && (
+            <span className="mt-0.5 block text-xs font-semibold text-rose-700 dark:text-rose-300">
+              📦 Pedido {pedido.cuando} · {pedido.cercanos} a menos de 5 km
+            </span>
+          )}
         </span>
         <span className="shrink-0 text-right text-xs text-slate-500 dark:text-slate-400">
           {fechaCorta(c.fecha)}
@@ -518,6 +612,15 @@ function ItemCliente({
             {grupo === "sin" && " · sin ubicación cargada"}
           </p>
           <Acciones cliente={c} />
+          {vecinos && (
+            <div className="space-y-2 pt-2">
+              <p className="text-sm font-bold">
+                Clientes a menos de 5 km{" "}
+                <span className="font-normal text-slate-500">({vecinos.length})</span>
+              </p>
+              <ListaCercanos cercanos={vecinos} onVer={onVerVecino} />
+            </div>
+          )}
           {c.origen === "app" && (
             <button
               type="button"

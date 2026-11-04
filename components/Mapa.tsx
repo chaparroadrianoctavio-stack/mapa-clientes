@@ -21,15 +21,32 @@ import Acciones from "./Acciones";
 // Centro de Gran Mendoza
 const CENTRO: L.LatLngTuple = [-32.97, -68.8];
 
-export type Foco = { id: string; t: number } | null;
+/**
+ * Pedido de "ir hasta" un cliente. Si trae radioKm, encuadra todo el círculo
+ * a su alrededor; padAbajo deja lugar para el panel del celular.
+ */
+export type Foco = {
+  id: string;
+  t: number;
+  radioKm?: number;
+  padAbajo?: number;
+  sinPopup?: boolean;
+} | null;
 
-/** Estado del panel "Nuevo cliente" que el mapa necesita dibujar. */
-export type ModoNuevo = {
+/**
+ * Círculo de búsqueda de cercanos. Se usa al cargar un cliente nuevo
+ * (editable: el pin verde se arrastra y se puede tocar el mapa) y al elegir un
+ * cliente con pedido (fijo, centrado en ese cliente).
+ */
+export type Radio = {
   punto: Coord | null;
   radioKm: number;
   eligiendo: boolean;
   cercanos: Set<string>;
+  editable: boolean;
 };
+
+export type InfoPedido = { cuando: string; cercanos: number };
 
 type Props = {
   clientes: ClienteConId[];
@@ -37,11 +54,12 @@ type Props = {
   foco: Foco;
   encuadre: number;
   onSeleccionar: (id: string) => void;
-  nuevo: ModoNuevo | null;
+  radio: Radio | null;
   onElegirPunto: (c: Coord) => void;
+  pedidos: Map<string, InfoPedido>;
 };
 
-type Estado = "normal" | "activo" | "cerca";
+type Estado = "normal" | "activo" | "cerca" | "pedido";
 
 const iconos = new Map<string, L.DivIcon>();
 function icono(letra: string, tipo: "coord" | "link", estado: Estado) {
@@ -105,8 +123,8 @@ export default function Mapa(props: Props) {
           />
         )}
         <Contenido {...props} />
-        {props.nuevo && (
-          <CapaNuevo nuevo={props.nuevo} onElegirPunto={props.onElegirPunto} />
+        {props.radio && (
+          <CapaRadio radio={props.radio} onElegirPunto={props.onElegirPunto} />
         )}
         <MiUbicacion />
         <ControlZoom />
@@ -145,7 +163,8 @@ function Contenido({
   foco,
   encuadre,
   onSeleccionar,
-  nuevo,
+  radio,
+  pedidos,
 }: Props) {
   const map = useMap();
   const marcadores = useRef(new Map<string, L.Marker>());
@@ -166,10 +185,17 @@ function Contenido({
     const m = marcadores.current.get(foco.id);
     if (!m) return;
     const destino = m.getLatLng();
-    const zoom = Math.max(map.getZoom(), 15);
     map.closePopup();
-    map.flyTo(destino, zoom, { duration: 0.8 });
-    map.once("moveend", () => m.openPopup());
+    if (foco.radioKm) {
+      map.flyToBounds(destino.toBounds(foco.radioKm * 2000), {
+        duration: 0.8,
+        paddingTopLeft: [20, 20],
+        paddingBottomRight: [20, 20 + (foco.padAbajo ?? 0)],
+      });
+    } else {
+      map.flyTo(destino, Math.max(map.getZoom(), 15), { duration: 0.8 });
+    }
+    if (!foco.sinPopup) map.once("moveend", () => m.openPopup());
   }, [foco, map]);
 
   return (
@@ -183,11 +209,13 @@ function Contenido({
             c.link ? "link" : "coord",
             c.id === seleccionadoId
               ? "activo"
-              : nuevo?.cercanos.has(c.id)
+              : radio?.cercanos.has(c.id)
                 ? "cerca"
-                : "normal",
+                : pedidos.has(c.id)
+                  ? "pedido"
+                  : "normal",
           )}
-          zIndexOffset={c.id === seleccionadoId ? 1000 : 0}
+          zIndexOffset={c.id === seleccionadoId ? 1000 : pedidos.has(c.id) ? 500 : 0}
           ref={(m) => {
             if (m) marcadores.current.set(c.id, m);
             else marcadores.current.delete(c.id);
@@ -202,6 +230,12 @@ function Contenido({
                 <p className="mt-1 text-xs opacity-60">
                   {fechaCorta(c.fecha)} · {telefonoLindo(c.telefono)}
                 </p>
+                {pedidos.has(c.id) && (
+                  <p className="mt-1.5 rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-200">
+                    📦 Pedido {pedidos.get(c.id)!.cuando} · {pedidos.get(c.id)!.cercanos}{" "}
+                    {pedidos.get(c.id)!.cercanos === 1 ? "cliente" : "clientes"} a menos de 5 km
+                  </p>
+                )}
               </div>
               <Acciones cliente={c} />
             </div>
@@ -212,16 +246,16 @@ function Contenido({
   );
 }
 
-/** Pin verde del cliente nuevo + círculo del radio de búsqueda. */
-function CapaNuevo({
-  nuevo,
+/** Círculo del radio de búsqueda (+ pin verde arrastrable si es un cliente nuevo). */
+function CapaRadio({
+  radio,
   onElegirPunto,
 }: {
-  nuevo: ModoNuevo;
+  radio: Radio;
   onElegirPunto: (c: Coord) => void;
 }) {
   const map = useMap();
-  const { punto, radioKm, eligiendo } = nuevo;
+  const { punto, radioKm, eligiendo, editable } = radio;
 
   useMapEvents({
     click(e) {
@@ -236,12 +270,12 @@ function CapaNuevo({
     return () => el.classList.remove("eligiendo");
   }, [map, eligiendo]);
 
-  // Mostrar todo el círculo si quedó fuera de la vista.
+  // Cliente nuevo: mostrar todo el círculo si quedó fuera de la vista.
   useEffect(() => {
-    if (!punto) return;
+    if (!punto || !editable) return;
     const b = L.latLng(punto.lat, punto.lng).toBounds(radioKm * 2000);
     if (!map.getBounds().contains(b)) map.fitBounds(b, { padding: [20, 20] });
-  }, [map, punto, radioKm]);
+  }, [map, punto, radioKm, editable]);
 
   if (!punto) return null;
   return (
@@ -249,9 +283,15 @@ function CapaNuevo({
       <Circle
         center={[punto.lat, punto.lng]}
         radius={radioKm * 1000}
-        pathOptions={{ color: "#16a34a", weight: 2, dashArray: "6 6", fillOpacity: 0.08 }}
+        pathOptions={{
+          color: editable ? "#16a34a" : "#e11d48",
+          weight: 2,
+          dashArray: "6 6",
+          fillOpacity: 0.08,
+        }}
         interactive={false}
       />
+      {editable && (
       <Marker
         position={[punto.lat, punto.lng]}
         icon={iconoNuevo}
@@ -264,6 +304,7 @@ function CapaNuevo({
           },
         }}
       />
+      )}
     </>
   );
 }

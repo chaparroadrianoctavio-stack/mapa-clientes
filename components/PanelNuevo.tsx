@@ -9,10 +9,11 @@ import {
   type Coord,
 } from "@/lib/coordenadas";
 import { normalizarTelefono, telefonoValido } from "@/lib/telefono";
-import { inicial, telefonoLindo } from "@/lib/utils";
-import Acciones from "./Acciones";
+import { telefonoLindo } from "@/lib/utils";
+import { cuandoPedido, hoyMendoza, sumarDias } from "@/lib/fechas";
+import ListaCercanos, { type Cercano } from "./ListaCercanos";
 
-export type Cercano = { cliente: ClienteConId; km: number };
+export type { Cercano };
 
 type Props = {
   punto: Coord | null;
@@ -26,13 +27,6 @@ type Props = {
   onGuardado: (c: ClienteConId) => void;
 };
 
-function hoyMendoza() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Argentina/Mendoza",
-  }).format(new Date());
-}
-
-const formatoKm = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 });
 
 const input =
   "w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-base outline-none focus:border-green-600 focus:ring-2 focus:ring-green-600/30 dark:border-slate-700 dark:bg-slate-800 md:text-sm";
@@ -56,6 +50,8 @@ export default function PanelNuevo({
   const [telefono, setTelefono] = useState("");
   const [zona, setZona] = useState("");
   const [fecha, setFecha] = useState(hoyMendoza);
+  const [tienePedido, setTienePedido] = useState(true);
+  const [pedido, setPedido] = useState(() => sumarDias(hoyMendoza(), 1));
   const [buscando, setBuscando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +120,8 @@ export default function PanelNuevo({
 
   const telNormal = normalizarTelefono(telefono);
   const telOk = telefonoValido(telNormal);
-  const puedeGuardar = !!punto && telOk && dbOk === true && !guardando;
+  const puedeGuardar =
+    !!punto && telOk && dbOk === true && !guardando && (!tienePedido || !!pedido);
 
   async function guardar() {
     if (!punto || !puedeGuardar) return;
@@ -140,6 +137,7 @@ export default function PanelNuevo({
           zona,
           fecha,
           link: link || undefined,
+          pedido: tienePedido ? pedido : undefined,
           lat: punto.lat,
           lng: punto.lng,
         }),
@@ -203,37 +201,7 @@ export default function PanelNuevo({
             2. Clientes a menos de {radioKm} km{" "}
             <span className="font-normal text-slate-500">({cercanos.length})</span>
           </h3>
-          {cercanos.length === 0 ? (
-            <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-500 dark:bg-slate-800">
-              No hay clientes cerca de este punto.
-            </p>
-          ) : (
-            <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-              {cercanos.map(({ cliente: c, km }) => (
-                <li key={c.id} className="space-y-2 p-3">
-                  <button
-                    type="button"
-                    onClick={() => onVerCliente(c)}
-                    className="flex w-full items-center gap-3 text-left"
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 text-sm font-bold text-white">
-                      {inicial(c.nombre)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">{c.nombre}</span>
-                      <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
-                        {c.zona || telefonoLindo(c.telefono)}
-                      </span>
-                    </span>
-                    <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800 dark:bg-green-500/15 dark:text-green-300">
-                      {formatoKm.format(km)} km
-                    </span>
-                  </button>
-                  <Acciones cliente={c} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <ListaCercanos cercanos={cercanos} onVer={onVerCliente} />
         </section>
       )}
 
@@ -268,8 +236,36 @@ export default function PanelNuevo({
           className={input}
           maxLength={120}
         />
+        <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-500/30 dark:bg-rose-500/10">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              checked={tienePedido}
+              onChange={(e) => setTienePedido(e.target.checked)}
+              className="h-4 w-4 accent-rose-600"
+            />
+            📦 Tiene pedido
+          </label>
+          {tienePedido && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="shrink-0 text-slate-600 dark:text-slate-300">Entrega</span>
+              <input
+                type="date"
+                value={pedido}
+                onChange={(e) => setPedido(e.target.value)}
+                className={input}
+              />
+            </label>
+          )}
+          {tienePedido && pedido && (
+            <p className="text-xs text-rose-800 dark:text-rose-200">
+              Queda marcado con pedido {cuandoPedido(pedido, hoyMendoza())} y con sus clientes a
+              menos de {radioKm} km.
+            </p>
+          )}
+        </div>
         <label className="flex items-center gap-2 text-sm">
-          <span className="shrink-0 text-slate-500">Fecha</span>
+          <span className="shrink-0 text-slate-500">Alta</span>
           <input
             type="date"
             value={fecha}

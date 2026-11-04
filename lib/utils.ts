@@ -54,7 +54,7 @@ export function urlComoLlegar(c: Cliente): string | null {
   return c.link ?? null;
 }
 
-export type Grupo = "mapa" | "link" | "sin";
+export type Grupo = "pedido" | "mapa" | "link" | "sin";
 
 /**
  * - "link": la ubicación vino de un link de Google Maps (tenga o no
