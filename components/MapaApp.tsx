@@ -13,7 +13,10 @@ import {
   type Grupo,
 } from "@/lib/utils";
 import Acciones from "./Acciones";
-import type { Foco } from "./Mapa";
+import PanelNuevo, { type Cercano } from "./PanelNuevo";
+import type { Foco, ModoNuevo } from "./Mapa";
+import { distanciaKm, type Coord } from "@/lib/coordenadas";
+import { tieneCoordenadas } from "@/lib/tipos";
 
 const Mapa = dynamic(() => import("./Mapa"), {
   ssr: false,
@@ -38,6 +41,9 @@ const puntos = () => {
 };
 const esEscritorio = () => window.matchMedia("(min-width: 768px)").matches;
 
+/** Radio para buscar clientes cercanos a uno nuevo. */
+const RADIO_KM = 5;
+
 export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   const [busqueda, setBusqueda] = useState("");
   const [mes, setMes] = useState("todos");
@@ -50,26 +56,75 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   const desdeMapa = useRef(false);
   const lista = useRef<HTMLDivElement>(null);
 
+  // Clientes guardados desde la app (base de datos)
+  const [extras, setExtras] = useState<ClienteConId[]>([]);
+  const [dbOk, setDbOk] = useState<boolean | null>(null);
+  // Panel "Nuevo cliente"
+  const [modo, setModo] = useState<"lista" | "nuevo">("lista");
+  const [punto, setPunto] = useState<Coord | null>(null);
+  const [eligiendo, setEligiendo] = useState(false);
+
+  useEffect(() => {
+    let vigente = true;
+    fetch("/api/clientes", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { dbConfigurada: boolean; clientes: ClienteConId[] }) => {
+        if (!vigente) return;
+        setDbOk(d.dbConfigurada);
+        setExtras(d.clientes);
+      })
+      .catch(() => {
+        if (vigente) setDbOk(false);
+      });
+    return () => {
+      vigente = false;
+    };
+  }, []);
+
+  const todos = useMemo(() => [...clientes, ...extras], [clientes, extras]);
+
+  const cercanos = useMemo<Cercano[]>(() => {
+    if (!punto) return [];
+    return todos
+      .filter(tieneCoordenadas)
+      .map((c) => ({ cliente: c as ClienteConId, km: distanciaKm(punto, c) }))
+      .filter((x) => x.km <= RADIO_KM)
+      .sort((a, b) => a.km - b.km);
+  }, [todos, punto]);
+
+  const modoNuevo = useMemo<ModoNuevo | null>(
+    () =>
+      modo === "nuevo"
+        ? {
+            punto,
+            radioKm: RADIO_KM,
+            eligiendo,
+            cercanos: new Set(cercanos.map((x) => x.cliente.id)),
+          }
+        : null,
+    [modo, punto, eligiendo, cercanos],
+  );
+
   const meses = useMemo(
-    () => [...new Set(clientes.map((c) => c.mes))].sort().reverse(),
-    [clientes],
+    () => [...new Set(todos.map((c) => c.mes))].sort().reverse(),
+    [todos],
   );
   const fechas = useMemo(
     () =>
       [
         ...new Set(
-          clientes.filter((c) => mes === "todos" || c.mes === mes).map((c) => c.fecha),
+          todos.filter((c) => mes === "todos" || c.mes === mes).map((c) => c.fecha),
         ),
       ]
         .sort()
         .reverse(),
-    [clientes, mes],
+    [todos, mes],
   );
 
   const filtrados = useMemo(() => {
     const q = normalizar(busqueda);
     const qDigitos = busqueda.replace(/\D/g, "");
-    return clientes.filter((c) => {
+    return todos.filter((c) => {
       if (mes !== "todos" && c.mes !== mes) return false;
       if (fecha !== "todas" && c.fecha !== fecha) return false;
       if (!q) return true;
@@ -79,7 +134,7 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
         (qDigitos.length >= 3 && c.telefono.includes(qDigitos))
       );
     });
-  }, [clientes, busqueda, mes, fecha]);
+  }, [todos, busqueda, mes, fecha]);
 
   const porGrupo = useMemo(() => {
     const g: Record<Grupo, ClienteConId[]> = { mapa: [], link: [], sin: [] };
@@ -106,6 +161,59 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   function elegirDesdeMapa(id: string) {
     desdeMapa.current = true;
     setSeleccionadoId(id);
+  }
+
+  // ---------- Nuevo cliente ----------
+  function abrirNuevo() {
+    setModo("nuevo");
+    setSeleccionadoId(null);
+    if (!esEscritorio()) setAlto(puntos()[1]);
+  }
+
+  function cerrarNuevo() {
+    setModo("lista");
+    setPunto(null);
+    setEligiendo(false);
+  }
+
+  function elegirPunto(c: Coord) {
+    setPunto(c);
+    setEligiendo(false);
+    if (!esEscritorio()) setAlto(puntos()[1]);
+  }
+
+  function cambiarEligiendo(v: boolean) {
+    setEligiendo(v);
+    if (v && !esEscritorio()) setAlto(ALTO_MIN);
+  }
+
+  function verCercano(c: ClienteConId) {
+    setSeleccionadoId(c.id);
+    setFoco((f) => ({ id: c.id, t: (f?.t ?? 0) + 1 }));
+    if (!esEscritorio()) setAlto(ALTO_MIN);
+  }
+
+  function guardado(c: ClienteConId) {
+    setExtras((e) => [...e, c]);
+    cerrarNuevo();
+    setBusqueda("");
+    setMes("todos");
+    setFecha("todas");
+    setSeleccionadoId(c.id);
+    setFoco((f) => ({ id: c.id, t: (f?.t ?? 0) + 1 }));
+    if (!esEscritorio()) setAlto(ALTO_MIN);
+  }
+
+  async function eliminar(c: ClienteConId) {
+    if (!confirm(`¿Eliminar a ${c.nombre}? Esto no se puede deshacer.`)) return;
+    const r = await fetch(`/api/clientes/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+    if (r.ok || r.status === 404) {
+      setExtras((e) => e.filter((x) => x.id !== c.id));
+      setSeleccionadoId(null);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error ?? "No se pudo eliminar.");
+    }
   }
 
   function cambiarMes(v: string) {
@@ -167,12 +275,28 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     <div className="relative h-dvh w-full overflow-hidden md:flex">
       <main className="absolute inset-0 md:relative md:order-2 md:flex-1">
         <Mapa
-          clientes={filtrados}
+          clientes={modo === "nuevo" ? todos : filtrados}
           seleccionadoId={seleccionadoId}
           foco={foco}
           encuadre={encuadre}
           onSeleccionar={elegirDesdeMapa}
+          nuevo={modoNuevo}
+          onElegirPunto={elegirPunto}
         />
+        {modo === "nuevo" && eligiendo && (
+          <div className="pointer-events-none absolute inset-x-0 top-28 z-[1000] flex justify-center px-4 md:top-3">
+            <div className="pointer-events-auto flex items-center gap-3 rounded-full bg-green-700 py-2 pl-4 pr-2 text-sm font-semibold text-white shadow-lg">
+              Tocá el mapa donde está el cliente
+              <button
+                type="button"
+                onClick={() => setEligiendo(false)}
+                className="rounded-full bg-white/20 px-3 py-1 text-xs hover:bg-white/30"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <aside
@@ -191,12 +315,38 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
         >
           <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-700 md:hidden" />
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold">
-              Clientes{" "}
-              <span className="text-sm font-normal text-slate-500 dark:text-slate-400">
-                ({total})
-              </span>
-            </h1>
+            {modo === "nuevo" ? (
+              <h1 className="flex items-center gap-1 text-lg font-bold">
+                <button
+                  type="button"
+                  onClick={cerrarNuevo}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="-ml-2 rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  aria-label="Volver a la lista"
+                >
+                  ←
+                </button>
+                Nuevo cliente
+              </h1>
+            ) : (
+              <h1 className="text-lg font-bold">
+                Clientes{" "}
+                <span className="text-sm font-normal text-slate-500 dark:text-slate-400">
+                  ({total})
+                </span>
+              </h1>
+            )}
+            <div className="flex items-center gap-1">
+              {modo === "lista" && (
+                <button
+                  type="button"
+                  onClick={abrirNuevo}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-700"
+                >
+                  + Nuevo
+                </button>
+              )}
             <button
               type="button"
               onClick={alternarTema}
@@ -208,8 +358,26 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
               <span className="dark:hidden">🌙</span>
               <span className="hidden dark:inline">☀️</span>
             </button>
+            </div>
           </div>
         </div>
+
+        {modo === "nuevo" ? (
+          <div className="flex-1 overflow-y-auto overscroll-contain border-t border-slate-200 pb-[env(safe-area-inset-bottom)] dark:border-slate-800">
+            <PanelNuevo
+              punto={punto}
+              eligiendo={eligiendo}
+              radioKm={RADIO_KM}
+              cercanos={cercanos}
+              dbOk={dbOk}
+              onPunto={elegirPunto}
+              onEligiendo={cambiarEligiendo}
+              onVerCliente={verCercano}
+              onGuardado={guardado}
+            />
+          </div>
+        ) : (
+        <>
 
         <div className="space-y-2 px-4 pb-3 pt-1">
           <input
@@ -276,6 +444,7 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
                       grupo={g.id}
                       activo={c.id === seleccionadoId}
                       onClick={() => elegirDesdeLista(c)}
+                      onEliminar={() => eliminar(c)}
                     />
                   ))}
                 </ul>
@@ -283,6 +452,8 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
             ) : null,
           )}
         </div>
+        </>
+        )}
       </aside>
     </div>
   );
@@ -293,11 +464,13 @@ function ItemCliente({
   grupo,
   activo,
   onClick,
+  onEliminar,
 }: {
   cliente: ClienteConId;
   grupo: Grupo;
   activo: boolean;
   onClick: () => void;
+  onEliminar: () => void;
 }) {
   const color =
     activo ? "bg-orange-500" : grupo === "mapa" ? "bg-blue-600" : grupo === "link" ? "bg-purple-600" : "bg-slate-400";
@@ -321,7 +494,14 @@ function ItemCliente({
           {inicial(c.nombre)}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-semibold">{c.nombre}</span>
+          <span className="flex items-center gap-1.5">
+            <span className="truncate font-semibold">{c.nombre}</span>
+            {c.origen === "app" && (
+              <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-green-800 dark:bg-green-500/15 dark:text-green-300">
+                Nuevo
+              </span>
+            )}
+          </span>
           <span className="block truncate text-sm text-slate-500 dark:text-slate-400">
             {c.zona || "Sin zona"}
           </span>
@@ -338,6 +518,15 @@ function ItemCliente({
             {grupo === "sin" && " · sin ubicación cargada"}
           </p>
           <Acciones cliente={c} />
+          {c.origen === "app" && (
+            <button
+              type="button"
+              onClick={onEliminar}
+              className="text-xs font-semibold text-red-600 hover:underline dark:text-red-400"
+            >
+              Eliminar este cliente
+            </button>
+          )}
         </div>
       )}
     </li>

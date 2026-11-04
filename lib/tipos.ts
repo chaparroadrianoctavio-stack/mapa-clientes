@@ -11,6 +11,8 @@ export type Cliente = {
   link?: string;
   /** Mes en formato AAAA-MM */
   mes: string;
+  /** "app" si se cargó desde el panel "Nuevo cliente" (guardado en la base) */
+  origen?: "app";
 };
 
 export type ClienteConId = Cliente & { id: string };

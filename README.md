@@ -46,6 +46,30 @@ protegido con usuario y contraseña.
 También podés editar `data/clientes.json` a mano: cada cliente es
 `{ fecha: "AAAA-MM-DD", nombre, zona, telefono, lat, lng, link?, mes: "AAAA-MM" }`.
 
+## Cargar un cliente nuevo desde la app
+
+Tocá **+ Nuevo** en el panel:
+
+1. Elegí dónde está: pegá un link de Google Maps o coordenadas, tocá
+   **Tocar en el mapa**, o usá **Estoy acá**. El pin verde se puede arrastrar.
+2. Aparecen los clientes a menos de 5 km (en verde en el mapa), ordenados por
+   distancia, con WhatsApp, Llamar y Cómo llegar.
+3. Completá nombre y teléfono y tocá **Guardar cliente**.
+
+Los clientes cargados así se guardan en la base de datos (no en el JSON) y
+llevan la etiqueta "Nuevo". Solo esos se pueden eliminar desde la app.
+El radio de 5 km se cambia en `RADIO_KM` (`components/MapaApp.tsx`).
+
+### Conectar la base de datos en Vercel (una sola vez)
+
+1. En el proyecto de Vercel: **Storage → Create Database → Upstash for Redis**
+   (plan gratuito) → elegí la región más cercana → **Connect** al proyecto.
+2. Eso crea solas las variables `KV_REST_API_URL` y `KV_REST_API_TOKEN`.
+3. **Deployments → ⋯ → Redeploy**.
+
+Sin la base conectada la app funciona igual y muestra los cercanos, pero no
+deja guardar.
+
 ## Desarrollo local
 
 Creá `.env.local` con:
@@ -53,6 +77,9 @@ Creá `.env.local` con:
 ```
 APP_USER=tu_usuario
 APP_PASSWORD=tu_contraseña
+# Opcional, para poder guardar clientes nuevos (copiarlas de Vercel → Storage):
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
 ```
 
 y corré `npm run dev` → http://localhost:3000

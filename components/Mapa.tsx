@@ -10,8 +10,10 @@ import {
   Popup,
   TileLayer,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import type { ClienteConId } from "@/lib/tipos";
+import type { Coord } from "@/lib/coordenadas";
 import { tieneCoordenadas } from "@/lib/tipos";
 import { fechaCorta, inicial, telefonoLindo } from "@/lib/utils";
 import Acciones from "./Acciones";
@@ -21,22 +23,34 @@ const CENTRO: L.LatLngTuple = [-32.97, -68.8];
 
 export type Foco = { id: string; t: number } | null;
 
+/** Estado del panel "Nuevo cliente" que el mapa necesita dibujar. */
+export type ModoNuevo = {
+  punto: Coord | null;
+  radioKm: number;
+  eligiendo: boolean;
+  cercanos: Set<string>;
+};
+
 type Props = {
   clientes: ClienteConId[];
   seleccionadoId: string | null;
   foco: Foco;
   encuadre: number;
   onSeleccionar: (id: string) => void;
+  nuevo: ModoNuevo | null;
+  onElegirPunto: (c: Coord) => void;
 };
 
+type Estado = "normal" | "activo" | "cerca";
+
 const iconos = new Map<string, L.DivIcon>();
-function icono(letra: string, tipo: "coord" | "link", activo: boolean) {
-  const clave = `${letra}|${tipo}|${activo}`;
+function icono(letra: string, tipo: "coord" | "link", estado: Estado) {
+  const clave = `${letra}|${tipo}|${estado}`;
   let i = iconos.get(clave);
   if (!i) {
     const seguro = letra.replace(/[<>&"']/g, "");
     i = L.divIcon({
-      className: `pin pin-${tipo}${activo ? " pin-activo" : ""}`,
+      className: `pin pin-${tipo}${estado === "normal" ? "" : ` pin-${estado}`}`,
       html: `<div class="pin-cuerpo"><span>${seguro}</span></div>`,
       iconSize: [32, 32],
       iconAnchor: [16, 36],
@@ -46,6 +60,13 @@ function icono(letra: string, tipo: "coord" | "link", activo: boolean) {
   }
   return i;
 }
+
+const iconoNuevo = L.divIcon({
+  className: "pin pin-nuevo",
+  html: '<div class="pin-cuerpo"><span>+</span></div>',
+  iconSize: [32, 32],
+  iconAnchor: [16, 36],
+});
 
 const iconoYo = L.divIcon({
   className: "yo",
@@ -84,6 +105,9 @@ export default function Mapa(props: Props) {
           />
         )}
         <Contenido {...props} />
+        {props.nuevo && (
+          <CapaNuevo nuevo={props.nuevo} onElegirPunto={props.onElegirPunto} />
+        )}
         <MiUbicacion />
         <ControlZoom />
       </MapContainer>
@@ -121,6 +145,7 @@ function Contenido({
   foco,
   encuadre,
   onSeleccionar,
+  nuevo,
 }: Props) {
   const map = useMap();
   const marcadores = useRef(new Map<string, L.Marker>());
@@ -153,7 +178,15 @@ function Contenido({
         <Marker
           key={c.id}
           position={[c.lat, c.lng]}
-          icon={icono(inicial(c.nombre), c.link ? "link" : "coord", c.id === seleccionadoId)}
+          icon={icono(
+            inicial(c.nombre),
+            c.link ? "link" : "coord",
+            c.id === seleccionadoId
+              ? "activo"
+              : nuevo?.cercanos.has(c.id)
+                ? "cerca"
+                : "normal",
+          )}
           zIndexOffset={c.id === seleccionadoId ? 1000 : 0}
           ref={(m) => {
             if (m) marcadores.current.set(c.id, m);
@@ -175,6 +208,62 @@ function Contenido({
           </Popup>
         </Marker>
       ))}
+    </>
+  );
+}
+
+/** Pin verde del cliente nuevo + círculo del radio de búsqueda. */
+function CapaNuevo({
+  nuevo,
+  onElegirPunto,
+}: {
+  nuevo: ModoNuevo;
+  onElegirPunto: (c: Coord) => void;
+}) {
+  const map = useMap();
+  const { punto, radioKm, eligiendo } = nuevo;
+
+  useMapEvents({
+    click(e) {
+      if (eligiendo) onElegirPunto({ lat: e.latlng.lat, lng: e.latlng.lng });
+    },
+  });
+
+  // Cursor en cruz mientras se elige el lugar.
+  useEffect(() => {
+    const el = map.getContainer();
+    el.classList.toggle("eligiendo", eligiendo);
+    return () => el.classList.remove("eligiendo");
+  }, [map, eligiendo]);
+
+  // Mostrar todo el círculo si quedó fuera de la vista.
+  useEffect(() => {
+    if (!punto) return;
+    const b = L.latLng(punto.lat, punto.lng).toBounds(radioKm * 2000);
+    if (!map.getBounds().contains(b)) map.fitBounds(b, { padding: [20, 20] });
+  }, [map, punto, radioKm]);
+
+  if (!punto) return null;
+  return (
+    <>
+      <Circle
+        center={[punto.lat, punto.lng]}
+        radius={radioKm * 1000}
+        pathOptions={{ color: "#16a34a", weight: 2, dashArray: "6 6", fillOpacity: 0.08 }}
+        interactive={false}
+      />
+      <Marker
+        position={[punto.lat, punto.lng]}
+        icon={iconoNuevo}
+        draggable
+        zIndexOffset={1500}
+        eventHandlers={{
+          dragend: (e) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            onElegirPunto({ lat: ll.lat, lng: ll.lng });
+          },
+        }}
+      />
     </>
   );
 }

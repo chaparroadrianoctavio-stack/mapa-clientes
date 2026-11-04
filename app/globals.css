@@ -63,6 +63,26 @@ body {
 .pin-link .pin-cuerpo {
   background: #9333ea;
 }
+.pin-cerca .pin-cuerpo {
+  background: #16a34a;
+}
+.pin-nuevo .pin-cuerpo {
+  background: #15803d;
+  border-color: #fde047;
+  border-width: 3px;
+  cursor: grab;
+}
+.pin-nuevo .pin-cuerpo span {
+  font-size: 20px;
+}
+.leaflet-container.eligiendo,
+.leaflet-container.eligiendo .leaflet-interactive {
+  cursor: crosshair;
+}
+/* Mientras se elige el lugar, los pines no "atrapan" el toque: marca el mapa. */
+.leaflet-container.eligiendo .pin:not(.pin-nuevo) {
+  pointer-events: none !important;
+}
 .pin-activo .pin-cuerpo {
   background: #f97316;
   transform: rotate(-45deg) scale(1.25);
