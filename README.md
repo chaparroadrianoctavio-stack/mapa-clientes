@@ -52,8 +52,9 @@ Tocá **+ Nuevo** en el panel:
 
 1. Elegí dónde está: pegá un link de Google Maps o coordenadas, tocá
    **Tocar en el mapa**, o usá **Estoy acá**. El pin verde se puede arrastrar.
-2. Aparecen los clientes a menos de 5 km (en verde en el mapa), ordenados por
-   distancia, con WhatsApp, Llamar y Cómo llegar.
+2. Aparecen los clientes cercanos (en verde en el mapa), ordenados por
+   distancia, con WhatsApp, Llamar y Cómo llegar. Con el selector **5 / 10 / 15 km**
+   cambiás el radio de búsqueda.
 3. Completá nombre y teléfono. **📦 Tiene pedido** viene tildado con fecha de
    mañana: cambiá la fecha o destildalo si no corresponde.
 4. Tocá **Guardar cliente**.
@@ -62,13 +63,15 @@ Tocá **+ Nuevo** en el panel:
 
 Los clientes con un pedido de hoy en adelante aparecen arriba de la lista
 ("Con pedido") y con pin rojo en el mapa. Al elegir uno se dibuja su círculo
-de 5 km, sus vecinos se marcan en verde y en la lista aparecen ordenados por
+(5, 10 o 15 km según el selector), sus vecinos se marcan en verde y en la lista aparecen ordenados por
 distancia con WhatsApp y Llamar. Cuando pasa la fecha, el pedido deja de
 mostrarse solo.
 
 Los clientes cargados así se guardan en la base de datos (no en el JSON) y
 llevan la etiqueta "Nuevo". Solo esos se pueden eliminar desde la app.
-El radio de 5 km se cambia en `RADIO_KM` (`components/MapaApp.tsx`).
+El radio arranca en 5 km (`RADIO_INICIAL_KM` en `components/MapaApp.tsx`); las
+opciones del selector están en `RADIOS` (`components/SelectorRadio.tsx`).
+El mensaje de WhatsApp está en `MENSAJE_WHATSAPP` (`lib/utils.ts`).
 
 ### Conectar la base de datos en Vercel (una sola vez)
 

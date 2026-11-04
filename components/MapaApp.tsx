@@ -15,6 +15,7 @@ import {
 import Acciones from "./Acciones";
 import PanelNuevo from "./PanelNuevo";
 import ListaCercanos, { type Cercano } from "./ListaCercanos";
+import SelectorRadio from "./SelectorRadio";
 import type { Foco, InfoPedido, Radio } from "./Mapa";
 import { distanciaKm, type Coord } from "@/lib/coordenadas";
 import { tieneCoordenadas } from "@/lib/tipos";
@@ -44,16 +45,21 @@ const puntos = () => {
 };
 const esEscritorio = () => window.matchMedia("(min-width: 768px)").matches;
 
-/** Radio para buscar clientes cercanos a uno nuevo o con pedido. */
-const RADIO_KM = 5;
+/** Radio inicial para buscar clientes cercanos (se cambia con el selector 5/10/15). */
+const RADIO_INICIAL_KM = 5;
 
-/** Clientes con coordenadas a menos de RADIO_KM de un punto, del más cerca al más lejos. */
-function buscarCercanos(todos: ClienteConId[], punto: Coord, excluir?: string): Cercano[] {
+/** Clientes con coordenadas a menos de radioKm de un punto, del más cerca al más lejos. */
+function buscarCercanos(
+  todos: ClienteConId[],
+  punto: Coord,
+  radioKm: number,
+  excluir?: string,
+): Cercano[] {
   return todos
     .filter(tieneCoordenadas)
     .filter((c) => c.id !== excluir)
     .map((c) => ({ cliente: c as ClienteConId, km: distanciaKm(punto, c) }))
-    .filter((x) => x.km <= RADIO_KM)
+    .filter((x) => x.km <= radioKm)
     .sort((a, b) => a.km - b.km);
 }
 
@@ -79,6 +85,7 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
   const [modo, setModo] = useState<"lista" | "nuevo">("lista");
   const [punto, setPunto] = useState<Coord | null>(null);
   const [eligiendo, setEligiendo] = useState(false);
+  const [radioKm, setRadioKm] = useState(RADIO_INICIAL_KM);
 
   useEffect(() => {
     let vigente = true;
@@ -102,20 +109,20 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
 
   // Cercanos al punto que se está cargando en "Nuevo cliente"
   const cercanos = useMemo<Cercano[]>(
-    () => (punto ? buscarCercanos(todos, punto) : []),
-    [todos, punto],
+    () => (punto ? buscarCercanos(todos, punto, radioKm) : []),
+    [todos, punto, radioKm],
   );
 
-  // Clientes con pedido pendiente y sus vecinos a menos de RADIO_KM
+  // Clientes con pedido pendiente y sus vecinos a menos de radioKm
   const vecinosPedido = useMemo(() => {
     const m = new Map<string, Cercano[]>();
     for (const c of todos) {
       if (pedidoPendiente(c.pedido, hoy) && tieneCoordenadas(c)) {
-        m.set(c.id, buscarCercanos(todos, c, c.id));
+        m.set(c.id, buscarCercanos(todos, c, radioKm, c.id));
       }
     }
     return m;
-  }, [todos, hoy]);
+  }, [todos, hoy, radioKm]);
 
   const infoPedidos = useMemo(() => {
     const m = new Map<string, InfoPedido>();
@@ -124,11 +131,12 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
         m.set(c.id, {
           cuando: cuandoPedido(c.pedido!, hoy),
           cercanos: vecinosPedido.get(c.id)?.length ?? 0,
+          radioKm,
         });
       }
     }
     return m;
-  }, [todos, hoy, vecinosPedido]);
+  }, [todos, hoy, vecinosPedido, radioKm]);
 
   const seleccionado = todos.find((c) => c.id === seleccionadoId) ?? null;
 
@@ -136,7 +144,7 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     if (modo === "nuevo") {
       return {
         punto,
-        radioKm: RADIO_KM,
+        radioKm,
         eligiendo,
         cercanos: new Set(cercanos.map((x) => x.cliente.id)),
         editable: true,
@@ -147,14 +155,14 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     if (seleccionado && vecinos && tieneCoordenadas(seleccionado)) {
       return {
         punto: { lat: seleccionado.lat, lng: seleccionado.lng },
-        radioKm: RADIO_KM,
+        radioKm,
         eligiendo: false,
         cercanos: new Set(vecinos.map((x) => x.cliente.id)),
         editable: false,
       };
     }
     return null;
-  }, [modo, punto, eligiendo, cercanos, seleccionado, vecinosPedido]);
+  }, [modo, punto, eligiendo, cercanos, seleccionado, vecinosPedido, radioKm]);
 
   const meses = useMemo(
     () => [...new Set(todos.map((c) => c.mes))].sort().reverse(),
@@ -194,13 +202,13 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     return g;
   }, [filtrados, infoPedidos]);
 
-  /** Foco en un cliente; si tiene pedido, encuadra su círculo de 5 km. */
-  function enfocar(c: ClienteConId, conRadio: boolean) {
+  /** Foco en un cliente; si tiene pedido, encuadra su círculo de búsqueda. */
+  function enfocar(c: ClienteConId, conRadio: boolean, radio = radioKm) {
     const escritorio = esEscritorio();
     setFoco((f) => ({
       id: c.id,
       t: (f?.t ?? 0) + 1,
-      radioKm: conRadio ? RADIO_KM : undefined,
+      radioKm: conRadio ? radio : undefined,
       padAbajo: conRadio && !escritorio ? Math.round(window.innerHeight * 0.5) : 0,
       // En el celular los datos ya están en el panel: el popup taparía el círculo.
       sinPopup: conRadio && !escritorio,
@@ -215,6 +223,14 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
     const el = lista.current?.querySelector(`[data-id="${CSS.escape(seleccionadoId)}"]`);
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [seleccionadoId]);
+
+  function cambiarRadio(km: number) {
+    setRadioKm(km);
+    // Si se está viendo un cliente con pedido, encuadrar el círculo nuevo.
+    if (modo === "lista" && seleccionado && vecinosPedido.has(seleccionado.id)) {
+      enfocar(seleccionado, true, km);
+    }
+  }
 
   function elegirDesdeLista(c: ClienteConId) {
     setSeleccionadoId(c.id);
@@ -441,7 +457,8 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
             <PanelNuevo
               punto={punto}
               eligiendo={eligiendo}
-              radioKm={RADIO_KM}
+              radioKm={radioKm}
+              onRadio={cambiarRadio}
               cercanos={cercanos}
               dbOk={dbOk}
               onPunto={elegirPunto}
@@ -522,6 +539,8 @@ export default function MapaApp({ clientes }: { clientes: ClienteConId[] }) {
                       pedido={infoPedidos.get(c.id)}
                       vecinos={vecinosPedido.get(c.id)}
                       onVerVecino={verVecino}
+                      radioKm={radioKm}
+                      onRadio={cambiarRadio}
                     />
                   ))}
                 </ul>
@@ -545,6 +564,8 @@ function ItemCliente({
   pedido,
   vecinos,
   onVerVecino,
+  radioKm,
+  onRadio,
 }: {
   cliente: ClienteConId;
   grupo: Grupo;
@@ -554,6 +575,8 @@ function ItemCliente({
   pedido?: InfoPedido;
   vecinos?: Cercano[];
   onVerVecino: (c: ClienteConId) => void;
+  radioKm: number;
+  onRadio: (km: number) => void;
 }) {
   const color = activo
     ? "bg-orange-500"
@@ -596,7 +619,7 @@ function ItemCliente({
           </span>
           {pedido && (
             <span className="mt-0.5 block text-xs font-semibold text-rose-700 dark:text-rose-300">
-              📦 Pedido {pedido.cuando} · {pedido.cercanos} a menos de 5 km
+              📦 Pedido {pedido.cuando} · {pedido.cercanos} a menos de {pedido.radioKm} km
             </span>
           )}
         </span>
@@ -614,10 +637,13 @@ function ItemCliente({
           <Acciones cliente={c} />
           {vecinos && (
             <div className="space-y-2 pt-2">
-              <p className="text-sm font-bold">
-                Clientes a menos de 5 km{" "}
-                <span className="font-normal text-slate-500">({vecinos.length})</span>
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-bold">
+                  Clientes a menos de {radioKm} km{" "}
+                  <span className="font-normal text-slate-500">({vecinos.length})</span>
+                </p>
+                <SelectorRadio valor={radioKm} onCambiar={onRadio} />
+              </div>
               <ListaCercanos cercanos={vecinos} onVer={onVerVecino} />
             </div>
           )}

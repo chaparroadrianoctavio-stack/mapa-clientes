@@ -46,7 +46,7 @@ export type Radio = {
   editable: boolean;
 };
 
-export type InfoPedido = { cuando: string; cercanos: number };
+export type InfoPedido = { cuando: string; cercanos: number; radioKm: number };
 
 type Props = {
   clientes: ClienteConId[];
@@ -233,7 +233,8 @@ function Contenido({
                 {pedidos.has(c.id) && (
                   <p className="mt-1.5 rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800 dark:bg-rose-500/20 dark:text-rose-200">
                     📦 Pedido {pedidos.get(c.id)!.cuando} · {pedidos.get(c.id)!.cercanos}{" "}
-                    {pedidos.get(c.id)!.cercanos === 1 ? "cliente" : "clientes"} a menos de 5 km
+                    {pedidos.get(c.id)!.cercanos === 1 ? "cliente" : "clientes"} a menos de{" "}
+                    {pedidos.get(c.id)!.radioKm} km
                   </p>
                 )}
               </div>

@@ -12,6 +12,7 @@ import { normalizarTelefono, telefonoValido } from "@/lib/telefono";
 import { telefonoLindo } from "@/lib/utils";
 import { cuandoPedido, hoyMendoza, sumarDias } from "@/lib/fechas";
 import ListaCercanos, { type Cercano } from "./ListaCercanos";
+import SelectorRadio from "./SelectorRadio";
 
 export type { Cercano };
 
@@ -19,6 +20,7 @@ type Props = {
   punto: Coord | null;
   eligiendo: boolean;
   radioKm: number;
+  onRadio: (km: number) => void;
   cercanos: Cercano[];
   dbOk: boolean | null;
   onPunto: (c: Coord) => void;
@@ -37,6 +39,7 @@ export default function PanelNuevo({
   punto,
   eligiendo,
   radioKm,
+  onRadio,
   cercanos,
   dbOk,
   onPunto,
@@ -197,10 +200,13 @@ export default function PanelNuevo({
       {/* 2. Cercanos */}
       {punto && (
         <section className="space-y-2">
-          <h3 className="text-sm font-bold">
-            2. Clientes a menos de {radioKm} km{" "}
-            <span className="font-normal text-slate-500">({cercanos.length})</span>
-          </h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold">
+              2. Clientes a menos de {radioKm} km{" "}
+              <span className="font-normal text-slate-500">({cercanos.length})</span>
+            </h3>
+            <SelectorRadio valor={radioKm} onCambiar={onRadio} />
+          </div>
           <ListaCercanos cercanos={cercanos} onVer={onVerCliente} />
         </section>
       )}
