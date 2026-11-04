@@ -38,8 +38,11 @@ export function telefonoLindo(tel: string): string {
   return m ? `+54 9 ${m[1]} ${m[2]}-${m[3]}` : `+${tel}`;
 }
 
+/** Mensaje que aparece ya escrito al abrir WhatsApp (se puede editar antes de enviar). */
+export const MENSAJE_WHATSAPP = "Mañana estamos cerca de tu domicilio\nNecesitas algun pedido?";
+
 export function urlWhatsapp(c: Cliente) {
-  return `https://wa.me/${c.telefono}`;
+  return `https://wa.me/${c.telefono}?text=${encodeURIComponent(MENSAJE_WHATSAPP)}`;
 }
 
 export function urlLlamar(c: Cliente) {
