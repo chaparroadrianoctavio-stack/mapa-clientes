@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mapa de clientes
 
-## Getting Started
+Mapa privado de clientes de la distribuidora (Mendoza). Next.js + Leaflet,
+protegido con usuario y contraseña.
 
-First, run the development server:
+## Agregar los clientes de un mes nuevo
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+1. Creá un CSV en `data/csv/`, por ejemplo `data/csv/2026-10.csv`, con este formato
+   (el encabezado es opcional):
+
+   ```
+   fecha,nombre,zona,telefono,lat,lng,link
+   3/10,Laura,Godoy Cruz · 12 km,5492611234567,-32.92,-68.84,
+   5/10,Pedro,Luján,5492617654321,,,https://maps.app.goo.gl/XXXX
+   7/10,Rosa,Retira por casa,5492619998888,,,
+   ```
+
+   - `fecha`: día/mes (ej. `3/10`).
+   - `telefono`: con código de país, sin `+` ni espacios (`549` + área + número).
+   - `lat`/`lng`: dejalos vacíos si no los tenés.
+   - `link`: opcional, un link de Google Maps (sirven los cortos `maps.app.goo.gl`).
+   - La zona puede tener comas (`13,2 km`), no hay problema.
+
+2. Importalo (el último número es el año):
+
+   ```bash
+   npm run importar -- data/csv/2026-10.csv 2026
+   ```
+
+   Si un cliente ya existe (misma fecha y teléfono) no se duplica.
+
+3. Si hay clientes con link y sin coordenadas, resolvé los links:
+
+   ```bash
+   npm run resolver-links
+   ```
+
+4. Subí los cambios. Vercel publica solo:
+
+   ```bash
+   git add data
+   git commit -m "Clientes de octubre 2026"
+   git push
+   ```
+
+También podés editar `data/clientes.json` a mano: cada cliente es
+`{ fecha: "AAAA-MM-DD", nombre, zona, telefono, lat, lng, link?, mes: "AAAA-MM" }`.
+
+## Desarrollo local
+
+Creá `.env.local` con:
+
+```
+APP_USER=tu_usuario
+APP_PASSWORD=tu_contraseña
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+y corré `npm run dev` → http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Grupos de la lista
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **En el mapa**: tienen lat/lng cargados en el CSV.
+- **Ubicación por link**: la ubicación salió de un link de Google Maps
+  (aparecen en el mapa en violeta si el link se pudo resolver).
+- **Sin ubicación**: ni coordenadas ni link.
